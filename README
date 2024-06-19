@@ -1,0 +1,2 @@
+problem : `/usr/bin/ld can't find libtsan_preinit.o`
+solution url : https://stackoverflow.com/questions/77858687/tsan-usr-bin-ld-cant-find-libtsan-preinit-o
