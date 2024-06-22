@@ -1,6 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c11 -pthread -fsanitize=thread -g
 LDFLAGS = -fsanitize=thread
+# CFLAGS = -Wall -Wextra -std=c11
 
 SRCS = futex.c mutex.c chan.c main.c
 OBJS = $(SRCS:.c=.o)
@@ -12,6 +13,8 @@ TARGET = channel_test
 
 all: $(TARGET)
 
+# $(TARGET): $(OBJS)
+# 	$(CC) $(CFLAGS) $^ -o $@
 $(TARGET): $(OBJS)
 	$(CC) $(LDFLAGS) $^ -o $@
 

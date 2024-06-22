@@ -19,17 +19,16 @@ static void chan_init(struct chan *ch, size_t cap)
 
     mutex_init(&ch->send_mtx), mutex_init(&ch->recv_mtx);
 
+    if (!cap)
+        ch->send_ftx = ch->recv_ftx = CHAN_NOT_READY;
+    else
+        ch->send_ftx = ch->recv_ftx = 0;
 
     ch->send_waiters = ch->recv_waiters = 0;
     ch->cap = cap;
     ch->head = (uint64_t) 1 << 32;
     ch->tail = 0;
     if (ch->cap > 0) memset(ch->ring, 0, cap * sizeof(struct chan_item));
-
-    if (!cap)
-        ch->send_ftx = ch->recv_ftx = CHAN_NOT_READY;
-    else
-        ch->send_ftx = ch->recv_ftx = 0;
 }
 
 struct chan *chan_make(size_t cap, chan_alloc_func_t alloc)
@@ -167,26 +166,25 @@ static int chan_recv_buf(struct chan *ch, void **data)
 
 static int chan_send_unbuf(struct chan *ch, void *data)
 {
-    mutex_lock(&ch->send_mtx);
     if (atomic_load_explicit(&ch->closed, memory_order_relaxed)) {
-        mutex_unlock(&ch->send_mtx);
-
         errno = EPIPE;
         return -1;
     }
 
-    
+    mutex_lock(&ch->send_mtx);
 
     void **ptr = NULL;
     if (!atomic_compare_exchange_strong_explicit(&ch->datap, &ptr, &data,
                                                  memory_order_acq_rel,
                                                  memory_order_acquire)) {
-        *ptr = data;
+        atomic_store(&ptr,&data);
+        // *ptr = data;
         atomic_store_explicit(&ch->datap, NULL, memory_order_release);
 
         if (atomic_fetch_sub_explicit(&ch->recv_ftx, 1, memory_order_acquire) ==
             CHAN_WAITING)
             chan_futex_wake(&ch->recv_ftx, 1);
+
     } else {
         if (atomic_fetch_add_explicit(&ch->send_ftx, 1, memory_order_acquire) ==
             CHAN_NOT_READY) {
@@ -201,7 +199,6 @@ static int chan_send_unbuf(struct chan *ch, void *data)
             }
         }
     }
-
     mutex_unlock(&ch->send_mtx);
     return 0;
 }
@@ -212,22 +209,21 @@ static int chan_recv_unbuf(struct chan *ch, void **data)
         errno = EINVAL;
         return -1;
     }
-    mutex_lock(&ch->recv_mtx);
 
     if (atomic_load_explicit(&ch->closed, memory_order_relaxed)) {
-        mutex_unlock(&ch->send_mtx);
         errno = EPIPE;
         return -1;
     }
+
+    mutex_lock(&ch->recv_mtx);
 
 
     void **ptr = NULL;
     if (!atomic_compare_exchange_strong_explicit(&ch->datap, &ptr, data,
                                                  memory_order_acq_rel,
                                                  memory_order_acquire)) {
-        *data = *ptr;
+        atomic_store_explicit(data, *ptr, memory_order_release);
         atomic_store_explicit(&ch->datap, NULL, memory_order_release);
-
         if (atomic_fetch_sub_explicit(&ch->send_ftx, 1, memory_order_acquire) ==
             CHAN_WAITING)
             chan_futex_wake(&ch->send_ftx, 1);

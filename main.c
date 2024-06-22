@@ -14,6 +14,8 @@ enum {
 };
 
 struct thread_arg {
+    _Atomic size_t msg;
+    size_t received;
     size_t id;
     size_t from, to;
     struct chan *ch;
@@ -27,21 +29,33 @@ static void *writer(void *arg)
 {
     struct thread_arg *a = arg;
 
-    for (size_t i = a->from; i < a->to; i++)
+    for (size_t i = a->from; i < a->to; i++){
         if (chan_send(a->ch, (void *) i) == -1) break;
+        // printf("Thread %zu sent %zu messages\n", a->id, i);
+    }
+
     return 0;
 }
 
 static void *reader(void *arg)
 {
     struct thread_arg *a = arg;
-    size_t msg, received = 0, expect = a->to - a->from;
+    size_t expect = a->to - a->from;
+    a->received=0;
+    size_t *msg = malloc(sizeof(size_t));
+    while (a->received < expect) {
+        if (chan_recv(a->ch, (void **)msg) == -1) break;
+        printf("msg: %zu\n",*msg);
+        atomic_fetch_add(&msg_count[*msg],1);
+        // atomic_compare_exchange_strong(&msg_count[a->msg],&tmp,1);
+        ++(a->received);
 
-    while (received < expect) {
-        if (chan_recv(a->ch, (void **) &msg) == -1) break;
-        atomic_fetch_add_explicit(&msg_count[msg], 1, memory_order_relaxed);
-        ++received;
+        // Check for data race
+        // if (a->msg < last_msg) {
+        //     printf("Data race detected: Thread %zu received out-of-order message (%zu followed by %zu)\n", a->id, last_msg, a->msg);
+        // }
     }
+    free(msg);
     return 0;
 }
 
@@ -98,8 +112,8 @@ static void test_chan(const size_t repeat,
                n_readers, n_writers, msg_total, rep + 1, repeat);
 
         memset(msg_count, 0, sizeof(size_t) * msg_total);
-        create_threads(n_readers, reader_fn, reader_args, reader_tids, ch);
         create_threads(n_writers, writer_fn, writer_args, writer_tids, ch);
+        create_threads(n_readers, reader_fn, reader_args, reader_tids, ch);
         join_threads(n_readers, reader_tids);
         join_threads(n_writers, writer_tids);
 
@@ -112,8 +126,8 @@ static void test_chan(const size_t repeat,
 
 int main()
 {
-    test_chan(50, 0, 500, 80, reader, 80, writer);
-    // test_chan(50, 7, 500, 80, reader, 80, writer);
+    test_chan(50, 0, 100, 80, reader, 80, writer);
+    test_chan(50, 7, 100, 80, reader, 80, writer);
 
     return 0;
 }
